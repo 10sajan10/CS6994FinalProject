@@ -1,0 +1,18 @@
+# Ignore Data folder and large tarball files
+Data/
+data/
+*.tar
+
+# Python caches and notebook checkpoints
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Database files
+*.db
+*.sqlite3
+
+# Environment files
+.env
+.venv/
+venv/
