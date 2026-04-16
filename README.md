@@ -2,7 +2,7 @@
 
 ## Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-- Docker Image file: https://drive.google.com/file/d/104fkVMOSoPA-O5F7ZxqdQ3L6YrLpBtR_/view?usp=sharing
+- Docker Image file:https://drive.google.com/file/d/1bs_cHBNVIVP6eEhOQ7YoHixy8Ck_lfr2/view?usp=sharing
 
 ## Quick Start
 
