@@ -82,8 +82,9 @@ python ingest_csv.py
 *(Make sure the CSV files are in the `Data/` folder).*
 
 ### Step 2: Normalize the Database
-Execute the SQL script to move the flat staging data into structured tables (`site`, `variable`, `datastream`, etc.).
+Execute the SQL script to move the flat staging data into structured tables (`site`, `variable`, `datastream`, etc.). First, copy the script into the container, then run it:
 ```bash
+docker cp normalize_data.sql postgres:/normalize_data.sql
 docker exec -it postgres psql -U admin -d database -f /normalize_data.sql
 ```
 
