@@ -1,0 +1,147 @@
+Simple Model Handoff Instructions
+
+File to use:
+
+streamflow_training_site_3_full.parquet
+Link: https://drive.google.com/drive/folders/1pKVTS0-nHlVxSlYhdv9e01rkinekiEFf?usp=sharing
+
+This is a sample training dataset for predicting next-hour streamflow at site 3.
+
+
+What to Predict
+
+Predict this column:
+
+target_streamflow
+
+This is the streamflow value at the prediction time.
+
+
+What to Use as Features
+
+Use the lagged columns as model features.
+
+The feature columns look like this:
+
+snow_depth_t-168 ... snow_depth_t-1
+water_temp_t-168 ... water_temp_t-1
+oxygen_dissolved_t-168 ... oxygen_dissolved_t-1
+streamflow_t-168 ... streamflow_t-1
+air_temp_t-168 ... air_temp_t-1
+precipitation_t-168 ... precipitation_t-1
+year_t-168 ... year_t-1
+month_t-168 ... month_t-1
+day_t-168 ... day_t-1
+hour_t-168 ... hour_t-1
+season_t-168 ... season_t-1
+
+Each row uses the previous 168 hours, which is 7 days of history.
+
+Example:
+
+streamflow_t-1 means streamflow 1 hour before prediction time.
+streamflow_t-168 means streamflow 168 hours before prediction time.
+air_temp_t-24 means air temperature 24 hours before prediction time.
+precipitation_t-6 means precipitation 6 hours before prediction time.
+
+
+
+This is what the model must predict.
+
+Do not use prediction_time as a normal numeric feature unless you are doing time-based feature engineering.
+
+prediction_time is mostly for sorting, splitting, and checking results.
+
+site_id is optional. Since this file is only for one site, site_id is constant and usually not useful.
+
+
+Feature Meaning
+
+snow_depth:
+Snow depth from the climate station at site 1.
+
+water_temp:
+River water temperature from site 3.
+
+oxygen_dissolved:
+Dissolved oxygen in the river water from site 3.
+
+streamflow:
+Past streamflow/discharge from site 3.
+
+air_temp:
+Air temperature from the climate station at site 2.
+
+precipitation:
+Precipitation from the climate station at site 2.
+
+year, month, day, hour, season:
+Time features for each historical hour.
+
+Season values:
+
+winter = 0
+spring = 1
+summer = 2
+fall = 3
+
+
+Basic Loading Code
+
+Use this:
+
+import pyarrow.parquet as pq
+
+df = pq.read_table("streamflow_training_site_3_sample_200.parquet").to_pandas()
+
+print(df.shape)
+print(df.head())
+
+
+Basic Train/Test Split
+
+Because this is time-series data, split by time.
+
+Do not randomly split the rows.
+
+Example:
+
+df = df.sort_values("prediction_time")
+
+split_idx = int(len(df) * 0.8)
+
+train_df = df.iloc[:split_idx]
+test_df = df.iloc[split_idx:]
+
+
+Create X and y
+
+Use target_streamflow as y.
+
+Use the lagged columns as X.
+
+Example:
+
+drop_cols = ["target_streamflow", "prediction_time"]
+
+X_train = train_df.drop(columns=drop_cols)
+y_train = train_df["target_streamflow"]
+
+X_test = test_df.drop(columns=drop_cols)
+y_test = test_df["target_streamflow"]
+
+Optional:
+
+If you do not want to use site_id, also drop it:
+
+drop_cols = ["target_streamflow", "prediction_time", "site_id"]
+
+
+Model Task
+
+This is a regression problem.
+
+The model should predict a continuous number:
+
+next-hour streamflow
+
