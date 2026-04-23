@@ -1,0 +1,11 @@
+{
+  "site_id": 3,
+  "train_rows": 29388,
+  "validation_rows": 3697,
+  "validation_start": "2025-03-24 07:00:00",
+  "validation_end": "2026-03-24 06:00:00",
+  "rmse": 43.0136242950998,
+  "mae": 32.96379852294922,
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models/3/lightning-best-v1.ckpt",
+  "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models/3/best_model.pt"
+}
