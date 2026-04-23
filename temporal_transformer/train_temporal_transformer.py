@@ -26,6 +26,21 @@ SEASON_NAMES = {
     3: "fall",
 }
 
+TIME_CONTEXT_COLUMNS = {"year", "month", "day", "hour", "day_of_week", "day_of_year", "season"}
+TEMPORAL_SEQUENCE_FEATURE_NAMES = [
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    "month_sin",
+    "month_cos",
+    "day_of_year",
+    "season_winter",
+    "season_spring",
+    "season_summer",
+    "season_fall",
+]
+
 
 def parse_args() -> argparse.Namespace:
     project_root = Path(__file__).resolve().parents[1]
@@ -101,6 +116,7 @@ def load_parquet_frames(pattern: str) -> pd.DataFrame:
         print(f"Loading parquet: {path}")
         df = pd.read_parquet(path)
         df["source_path"] = str(path)
+        df["source_mtime"] = float(path.stat().st_mtime)
         frames.append(df)
 
     combined = pd.concat(frames, ignore_index=True, sort=False)
@@ -113,23 +129,53 @@ def parse_timestamp_columns(df: pd.DataFrame) -> pd.DataFrame:
     for column in ["history_end_time", "forecast_start_time", "forecast_end_time"]:
         if column in out.columns:
             out[column] = pd.to_datetime(out[column], errors="coerce")
-    bad_rows = out["forecast_end_time"].isna().sum()
-    if bad_rows:
-        raise ValueError(f"Found {bad_rows} rows with invalid forecast_end_time timestamps.")
+    for column in ["history_end_time", "forecast_start_time", "forecast_end_time"]:
+        if column not in out.columns:
+            raise ValueError(f"Expected timestamp column is missing: {column}")
+        bad_rows = int(out[column].isna().sum())
+        if bad_rows:
+            raise ValueError(f"Found {bad_rows} rows with invalid {column} timestamps.")
     return out
 
 
 def deduplicate_site_rows(df: pd.DataFrame) -> pd.DataFrame:
-    sort_columns = ["site_id", "forecast_start_time", "source_path"]
-    available_sort = [col for col in sort_columns if col in df.columns]
+    duplicate_keys = ["site_id", "forecast_start_time"]
+    duplicate_mask = df.duplicated(subset=duplicate_keys, keep=False)
+    if not duplicate_mask.any():
+        return df
+
+    ranking_columns: list[str] = []
+    version_candidates = ["source_version", "dataset_version", "data_version", "version"]
+    for column in version_candidates:
+        if column in df.columns and df[column].notna().any():
+            ranking_columns.append(column)
+            break
+
+    if "source_mtime" in df.columns and df["source_mtime"].notna().any():
+        ranking_columns.append("source_mtime")
+
+    if not ranking_columns:
+        duplicate_count = int(duplicate_mask.sum())
+        print(
+            f"Found {duplicate_count:,} duplicate rows by site/timestamp but no reliable "
+            "version or file timestamp column was available, so duplicates were kept."
+        )
+        return df.reset_index(drop=True)
+
+    sort_columns = duplicate_keys + ranking_columns + (["source_path"] if "source_path" in df.columns else [])
+    ascending = [True, True] + [True] * len(ranking_columns) + ([True] if "source_path" in df.columns else [])
+
     deduped = (
-        df.sort_values(available_sort)
-        .drop_duplicates(subset=["site_id", "forecast_start_time"], keep="last")
+        df.sort_values(sort_columns, ascending=ascending)
+        .drop_duplicates(subset=duplicate_keys, keep="last")
         .reset_index(drop=True)
     )
     dropped = len(df) - len(deduped)
     if dropped:
-        print(f"Dropped {dropped:,} duplicate site/timestamp rows, keeping the latest file version.")
+        print(
+            f"Dropped {dropped:,} duplicate site/timestamp rows, keeping the newest source based on "
+            f"{', '.join(ranking_columns)}."
+        )
     return deduped
 
 
@@ -156,7 +202,10 @@ def infer_columns(df: pd.DataFrame) -> tuple[list[str], list[str], list[str]]:
     static_cols = [
         col
         for col in df.columns
-        if col not in dropped_feature_columns and col not in lag_cols and col not in target_cols
+        if col not in dropped_feature_columns
+        and col not in lag_cols
+        and col not in target_cols
+        and col not in TIME_CONTEXT_COLUMNS
     ]
     return lag_cols, target_cols, static_cols
 
@@ -178,6 +227,45 @@ def build_static_features(df: pd.DataFrame, static_cols: list[str]) -> pd.DataFr
     static_df = df[static_cols].copy()
     static_df = add_fixed_season_dummies(static_df)
     return static_df
+
+
+def build_temporal_sequence_features(df: pd.DataFrame, lag_cols: list[str]) -> np.ndarray:
+    if "history_end_time" not in df.columns:
+        raise ValueError("Expected history_end_time column for temporal sequence feature construction.")
+
+    history_end_times = pd.to_datetime(df["history_end_time"], errors="coerce")
+    if history_end_times.isna().any():
+        bad_count = int(history_end_times.isna().sum())
+        raise ValueError(f"Found {bad_count} invalid history_end_time values.")
+
+    lag_steps = [extract_lag_number(col) for col in lag_cols]
+    num_rows = len(df)
+    num_steps = len(lag_cols)
+    temporal = np.zeros((num_rows, num_steps, len(TEMPORAL_SEQUENCE_FEATURE_NAMES)), dtype=np.float32)
+
+    for step_idx, lag_step in enumerate(lag_steps):
+        # Lag columns are ordered oldest -> newest (for example t-168 ... t-1),
+        # and each timestamp is aligned to that same discharge step.
+        timestamps = history_end_times - pd.to_timedelta(lag_step - 1, unit="h")
+        season_names = timestamps.dt.month.map(month_to_season_name)
+        hours = timestamps.dt.hour.to_numpy(dtype=np.float32)
+        day_of_week = timestamps.dt.dayofweek.to_numpy(dtype=np.float32)
+        months = timestamps.dt.month.to_numpy(dtype=np.float32)
+        day_of_year = timestamps.dt.dayofyear.to_numpy(dtype=np.float32)
+
+        temporal[:, step_idx, 0] = np.sin(2.0 * np.pi * hours / 24.0)
+        temporal[:, step_idx, 1] = np.cos(2.0 * np.pi * hours / 24.0)
+        temporal[:, step_idx, 2] = np.sin(2.0 * np.pi * day_of_week / 7.0)
+        temporal[:, step_idx, 3] = np.cos(2.0 * np.pi * day_of_week / 7.0)
+        temporal[:, step_idx, 4] = np.sin(2.0 * np.pi * (months - 1.0) / 12.0)
+        temporal[:, step_idx, 5] = np.cos(2.0 * np.pi * (months - 1.0) / 12.0)
+        temporal[:, step_idx, 6] = day_of_year
+        temporal[:, step_idx, 7] = (season_names == "winter").to_numpy(dtype=np.float32)
+        temporal[:, step_idx, 8] = (season_names == "spring").to_numpy(dtype=np.float32)
+        temporal[:, step_idx, 9] = (season_names == "summer").to_numpy(dtype=np.float32)
+        temporal[:, step_idx, 10] = (season_names == "fall").to_numpy(dtype=np.float32)
+
+    return np.nan_to_num(temporal, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def trailing_one_year_split(site_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp, pd.Timestamp]:
@@ -229,9 +317,12 @@ def transform_frame(
     lag_scaler: StandardScaler,
     static_scaler: StandardScaler,
     target_scaler: StandardScaler,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     lag_values = df[lag_cols].to_numpy(dtype=np.float32)
     lag_values = lag_scaler.transform(lag_values.reshape(-1, 1)).reshape(lag_values.shape)
+    lag_values = np.nan_to_num(lag_values, nan=0.0, posinf=0.0, neginf=0.0)
+
+    temporal_values = build_temporal_sequence_features(df, lag_cols)
 
     static_df = build_static_features(df, static_cols)
     static_df = static_df.apply(pd.to_numeric, errors="coerce")
@@ -241,16 +332,25 @@ def transform_frame(
     static_df = static_df[static_feature_cols]
     static_df = static_df.fillna(0.0)
     static_values = static_scaler.transform(static_df.to_numpy(dtype=np.float32))
+    static_values = np.nan_to_num(static_values, nan=0.0, posinf=0.0, neginf=0.0)
 
     target_values = df[target_cols].to_numpy(dtype=np.float32)
     target_values = target_scaler.transform(target_values.reshape(-1, 1)).reshape(target_values.shape)
+    target_values = np.nan_to_num(target_values, nan=0.0, posinf=0.0, neginf=0.0)
 
-    return lag_values, static_values, target_values
+    return lag_values, temporal_values, static_values, target_values
 
 
 class StreamflowSequenceDataset(Dataset):
-    def __init__(self, lag_values: np.ndarray, static_values: np.ndarray, targets: np.ndarray):
+    def __init__(
+        self,
+        lag_values: np.ndarray,
+        temporal_values: np.ndarray,
+        static_values: np.ndarray,
+        targets: np.ndarray,
+    ):
         self.lag_values = lag_values.astype(np.float32)
+        self.temporal_values = temporal_values.astype(np.float32)
         self.static_values = static_values.astype(np.float32)
         self.targets = targets.astype(np.float32)
 
@@ -259,8 +359,11 @@ class StreamflowSequenceDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         lag_sequence = self.lag_values[index][:, None]
+        temporal_sequence = self.temporal_values[index]
+        if lag_sequence.shape[0] != temporal_sequence.shape[0]:
+            raise ValueError("Lag sequence and temporal sequence must have the same number of timesteps.")
         repeated_static = np.repeat(self.static_values[index][None, :], lag_sequence.shape[0], axis=0)
-        sequence = np.concatenate([lag_sequence, repeated_static], axis=1)
+        sequence = np.concatenate([lag_sequence, temporal_sequence, repeated_static], axis=1)
 
         return (
             torch.tensor(sequence, dtype=torch.float32),
@@ -443,7 +546,7 @@ def train_one_site(
         target_cols,
     )
 
-    train_lags, train_static, train_targets = transform_frame(
+    train_lags, train_temporal, train_static, train_targets = transform_frame(
         train_df,
         lag_cols,
         target_cols,
@@ -453,7 +556,7 @@ def train_one_site(
         static_scaler,
         target_scaler,
     )
-    valid_lags, valid_static, valid_targets = transform_frame(
+    valid_lags, valid_temporal, valid_static, valid_targets = transform_frame(
         valid_df,
         lag_cols,
         target_cols,
@@ -464,8 +567,8 @@ def train_one_site(
         target_scaler,
     )
 
-    train_dataset = StreamflowSequenceDataset(train_lags, train_static, train_targets)
-    valid_dataset = StreamflowSequenceDataset(valid_lags, valid_static, valid_targets)
+    train_dataset = StreamflowSequenceDataset(train_lags, train_temporal, train_static, train_targets)
+    valid_dataset = StreamflowSequenceDataset(valid_lags, valid_temporal, valid_static, valid_targets)
     train_loader = make_dataloader(train_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)
     valid_loader = make_dataloader(valid_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers)
 
@@ -532,6 +635,7 @@ def train_one_site(
     print(f"Site {site_id}: validation RMSE={rmse:.4f}, MAE={mae:.4f}")
 
     best_model_path = site_model_dir / "best_model.pt"
+    metadata_path = site_model_dir / "metadata.json"
     torch.save(
         {
             "model_state_dict": best_model.state_dict(),
@@ -541,6 +645,7 @@ def train_one_site(
             "static_feature_cols": static_feature_cols,
             "lag_scaler_mean": lag_scaler.mean_.tolist(),
             "lag_scaler_scale": lag_scaler.scale_.tolist(),
+            "temporal_sequence_feature_names": TEMPORAL_SEQUENCE_FEATURE_NAMES,
             "static_scaler_mean": static_scaler.mean_.tolist(),
             "static_scaler_scale": static_scaler.scale_.tolist(),
             "target_scaler_mean": target_scaler.mean_.tolist(),
@@ -552,6 +657,23 @@ def train_one_site(
         best_model_path,
     )
     print(f"Site {site_id}: saved best model bundle to {best_model_path}")
+    metadata = {
+        "site_id": site_id,
+        "best_model_path": str(best_model_path),
+        "best_checkpoint": best_ckpt_path,
+        "validation_start": str(validation_start),
+        "validation_end": str(validation_end),
+        "train_rows": int(len(train_df)),
+        "validation_rows": int(len(valid_df)),
+        "lag_cols": lag_cols,
+        "target_cols": target_cols,
+        "static_feature_cols": static_feature_cols,
+        "temporal_sequence_feature_names": TEMPORAL_SEQUENCE_FEATURE_NAMES,
+        "model_hparams": dict(best_model.hparams),
+        "source_files": sorted(site_df["source_path"].dropna().unique().tolist()) if "source_path" in site_df.columns else [],
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    print(f"Site {site_id}: saved metadata to {metadata_path}")
 
     expanded_predictions = expand_predictions_by_target_timestamp(
         site_id=site_id,
