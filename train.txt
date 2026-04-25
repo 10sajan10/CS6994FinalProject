@@ -1,0 +1,196 @@
+Training pipeline guide
+=======================
+
+Environment
+-----------
+
+Create or refresh the Python environment:
+
+bash temporal_transformer/setup_env.sh
+
+All run scripts activate .venv before starting training.
+
+
+Normal all-season discharge training
+------------------------------------
+
+Command:
+
+bash temporal_transformer/run_discharge_training.sh
+
+Python entry point:
+
+temporal_transformer/train_discharge_transformer.py
+
+Default input pattern:
+
+streamflow_parquet_v2/*precip24avg*.parquet
+
+Default outputs:
+
+- models_discharge/<site_id>/discharge_best_model.pt
+- models_discharge/<site_id>/discharge-lightning-best*.ckpt
+- models_discharge/<site_id>/metadata.json
+- models_discharge/<site_id>/run_summary.json
+- lightning_logs_discharge/
+- discharge_metrics_by_season.csv
+- discharge_metrics_by_season_horizon.csv
+- discharge_overall_validation_metrics.csv
+- discharge_validation_predictions_long.csv
+
+
+Normal all-season air-temperature training
+------------------------------------------
+
+Command:
+
+bash temporal_transformer/run_air_temperature_training.sh
+
+Python entry point:
+
+temporal_transformer/train_air_temperature_transformer.py
+
+Default input pattern:
+
+air_temperature_parquet_v2/air_temperature_training_site_*_lb168_h24.parquet
+
+Default outputs:
+
+- models_air_temperature/<site_id>/air_temperature_best_model.pt
+- models_air_temperature/<site_id>/air-temperature-lightning-best*.ckpt
+- models_air_temperature/<site_id>/metadata.json
+- models_air_temperature/<site_id>/run_summary.json
+- lightning_logs_air_temperature/
+- air_temperature_metrics_by_season.csv
+- air_temperature_metrics_by_season_horizon.csv
+- air_temperature_overall_validation_metrics.csv
+- air_temperature_validation_predictions_long.csv
+
+
+Season-specific training
+------------------------
+
+Command:
+
+bash temporal_transformer/run_season_specific_training.sh
+
+Python entry point:
+
+temporal_transformer/train_season_specific_transformers.py
+
+Default output root:
+
+season_specific_training/
+
+This trains one model per:
+
+- target variable: discharge, air_temperature
+- site: discharge sites 3 and 4; air-temperature sites 1 and 2
+- season: winter, spring, summer, fall
+
+That is 16 model groups total.
+
+Season-specific model locations:
+
+- season_specific_training/models_discharge_season_specific/site_<site_id>/<season>/
+- season_specific_training/models_air_temperature_season_specific/site_<site_id>/<season>/
+
+Season-specific outputs:
+
+- season_specific_training/metrics/
+- season_specific_training/predictions/
+- season_specific_training/lightning_logs_discharge_season_specific/
+- season_specific_training/lightning_logs_air_temperature_season_specific/
+
+
+Common model design
+-------------------
+
+All three trainers use a PyTorch Lightning temporal transformer.
+
+Shared default hyperparameters:
+
+- batch size: 128
+- max epochs: 50
+- early stopping patience: 7
+- learning rate: 0.001
+- hidden dimension: 96
+- attention heads: 4
+- transformer layers: 3
+- dropout: 0.1
+- random seed: 42
+
+The model predicts deltas from the most recent observed value:
+
+- discharge: target_discharge_t+h minus discharge_t-1
+- air temperature: target_air_temp_t+h minus air_temp_t-1
+
+The target deltas are scaled with StandardScaler during training and converted
+back to real units for metrics and prediction files.
+
+Variation clipping is enabled by default to limit unrealistic forecast jumps:
+
+- variation_clip_pct: 0.05
+- variation_clip_history_multiplier: 1.5
+- variation_clip_absolute_floor: 2.0
+
+Use --disable-variation-clip to turn this off.
+
+
+Temporal and static features
+----------------------------
+
+Normal discharge training uses:
+
+- 168 discharge lag values as sequence input.
+- Temporal sequence features built from lag timestamps.
+- Static/context columns such as snow_depth_latest, air_temp_avg_last_24h,
+  precip_avg_last_24h, and calendar context.
+- Season dummy variables from the parquet season column.
+
+Normal air-temperature training uses:
+
+- 168 air-temperature lag values as sequence input.
+- Temporal sequence features built from lag timestamps.
+- No external static hydrologic or climatological variables.
+
+Season-specific training uses:
+
+- One filtered dataset per site and forecast-start season.
+- No season column as a model input.
+- Temporal features include hour, day-of-week, month, and day-of-year cycles.
+- Discharge still uses static/context features except season.
+- Air temperature remains air-temperature-only.
+
+
+Validation split
+----------------
+
+Each site uses a trailing one-year validation split.
+
+The split is based on the latest available forecast_end_time:
+
+- training rows: forecast_end_time before validation_start
+- validation rows: forecast_start_time at or after validation_start
+
+This prevents future target information from leaking into training.
+
+
+Useful command variants
+-----------------------
+
+Run fewer epochs for a smoke test:
+
+bash temporal_transformer/run_discharge_training.sh --max-epochs 2
+
+Train only discharge season-specific models:
+
+bash temporal_transformer/run_season_specific_training.sh --variables discharge
+
+Train only winter and spring season-specific models:
+
+bash temporal_transformer/run_season_specific_training.sh --seasons winter spring
+
+Write season-specific outputs to another folder:
+
+bash temporal_transformer/run_season_specific_training.sh --output-root season_specific_training_test

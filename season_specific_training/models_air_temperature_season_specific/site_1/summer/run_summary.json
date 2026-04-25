@@ -1,0 +1,15 @@
+{
+  "target_variable": "air_temperature",
+  "site_id": 1,
+  "season": "summer",
+  "train_rows": 7740,
+  "validation_rows": 968,
+  "validation_start": "2025-03-24 18:00:00",
+  "validation_end": "2026-03-24 17:00:00",
+  "rmse": 2.577608831348362,
+  "mae": 1.8863279819488525,
+  "rmse_skill_vs_persistence": 0.7460074381247952,
+  "mae_skill_vs_persistence": 0.7682766565669239,
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/season_specific_training/models_air_temperature_season_specific/site_1/summer/air_temperature-site_1-summer-best.ckpt",
+  "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/season_specific_training/models_air_temperature_season_specific/site_1/summer/air_temperature_site_1_summer_best_model.pt"
+}

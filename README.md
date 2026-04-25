@@ -1,93 +1,171 @@
-# LRO PostgreSQL Docker Setup
+# CS6994 Final Project: Logan River Forecasting
 
-## Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-- [Git](https://git-scm.com/) installed
+This repository contains the full data and modeling workflow for multihorizon
+forecasting at Logan River Observatory sites. It includes the PostgreSQL data
+setup, parquet feature generation notebook, temporal transformer training code,
+saved model artifacts, prediction CSVs, and validation metrics.
 
----
+The final modeling work covers two targets:
 
-## 🚀 Quick Start (For Receivers/Reviewers)
-Getting the database up and running with all 4 million rows of data is now completely automated! You do **not** need to manually run any Python scripts or import any database dumps.
+- Discharge forecasting for stream sites 3 and 4.
+- Air-temperature forecasting for climate sites 1 and 2.
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/10sajan10/CS6694FinalProject.git
-cd CS6694FinalProject
-```
+Each model predicts the next 24 hourly values from a 168-hour lookback window.
 
-### 2. Build & Start the Database
+## Main Files
+
+- `build_streamflow_training_parquet_v2_multihorizon.ipynb`
+  - Builds the discharge and air-temperature training parquet files.
+- `parquet.txt`
+  - Documents the parquet datasets, columns, sampling, and cleaning rules.
+- `train.txt`
+  - Documents the normal and season-specific training pipelines.
+- `metrics.txt`
+  - Documents all metric/prediction files and summarizes current results.
+- `temporal_transformer/train_discharge_transformer.py`
+  - Normal all-season discharge trainer.
+- `temporal_transformer/train_air_temperature_transformer.py`
+  - Normal all-season air-temperature trainer.
+- `temporal_transformer/train_season_specific_transformers.py`
+  - Trains one model per variable, site, and season.
+
+## Data Setup
+
+The database can be recreated with Docker:
+
 ```bash
 docker compose up -d --build
 ```
-*Note: The first time you start the container, it will take a minute or two because it is automatically executing the database creation scripts and unzipping the 4 million rows from the `init-scripts/` directory.*
 
-### 3. Connect to the Database
-| Parameter | Value            |
-|-----------|------------------|
-| Host      | `localhost`      |
-| Port      | `5433`           |
-| Database  | `database`       |
-| User      | `admin`          |
-| Password  | `password`       |
+Connection settings:
 
-**Connect via psql using Docker:**
+| Parameter | Value |
+| --- | --- |
+| Host | `localhost` |
+| Port | `5433` |
+| Database | `database` |
+| User | `admin` |
+| Password | `password` |
+
+The Docker startup scripts live in `init-scripts/`.
+
+## Parquet Datasets
+
+Current training parquet files:
+
+- `streamflow_parquet_v2/discharge_training_site_3_lb168_air24avg_precip24avg_h24.parquet`
+- `streamflow_parquet_v2/discharge_training_site_4_lb168_air24avg_precip24avg_h24.parquet`
+- `air_temperature_parquet_v2/air_temperature_training_site_1_lb168_h24.parquet`
+- `air_temperature_parquet_v2/air_temperature_training_site_2_lb168_h24.parquet`
+
+Discharge parquet rows contain 168 hours of discharge history, 24-hour mean air
+temperature, 24-hour mean precipitation, latest snow depth, calendar features,
+and 24 discharge targets.
+
+Air-temperature parquet rows contain only each target site's own 168-hour
+air-temperature history, calendar features, and 24 air-temperature targets.
+
+See `parquet.txt` for the complete schema and data-quality rules.
+
+## Training
+
+Set up the Python environment:
+
 ```bash
-docker exec -it postgres psql -U admin -d database
+bash temporal_transformer/setup_env.sh
 ```
 
-**Connect via Python (psycopg2):**
-```python
-import psycopg2
-conn = psycopg2.connect(
-    host="localhost", port=5433,
-    dbname="database", user="admin", password="password"
-)
-```
+Run normal all-season discharge training:
 
-### 4. Stop the Container
 ```bash
-docker compose down        # keeps data volume
-docker compose down -v     # removes data volume too (WARNING: DELETES DATA)
+bash temporal_transformer/run_discharge_training.sh
 ```
 
----
+Run normal all-season air-temperature training:
 
-## 🛠️ The Data Pipeline (For Developers)
-
-If you are updating the raw data or modifying the database schemas, here is how the data was built from scratch.
-
-### Step 1: Ingest Raw CSV Data
-Run the python script to parse metadata headers from the LRO CSV files and batch-insert the data into the temporary `staging` table.
 ```bash
-python ingest_csv.py
+bash temporal_transformer/run_air_temperature_training.sh
 ```
-*(Make sure the raw CSV files are in the `Data/` folder).*
 
-### Step 2: Normalize the Database
-Execute the SQL script to move the flat staging data into structured tables (`site`, `variable`, `datastream`, etc.).
+Run the full season-specific training pipeline:
+
 ```bash
-docker cp normalize_data.sql postgres:/normalize_data.sql
-docker exec -it postgres psql -U admin -d database -f /normalize_data.sql
+bash temporal_transformer/run_season_specific_training.sh
 ```
 
-### Step 3: Explore the Data
-Launch the Jupyter Notebook to verify the row counts and preview the normalized data.
-```bash
-jupyter notebook explore_staging.ipynb
-```
-*(Make sure to run `pip install pandas sqlalchemy psycopg2-binary notebook` first if you haven't).*
+The season-specific pipeline trains 16 models:
 
----
+- 2 variables: `discharge`, `air_temperature`
+- 2 sites per variable
+- 4 seasons: `winter`, `spring`, `summer`, `fall`
 
-## 📂 Project Structure
-```
-Final Project/
-├── Dockerfile                  # PostgreSQL 16 image definition
-├── docker-compose.yml          # Service orchestration - Maps port 5433 to 5432
-├── init-scripts/
-│   ├── 01-create-schema.sql    # Auto-runs on first startup: Creates tables
-│   └── 02-data-dump.sql.gz     # Auto-runs on first startup: Inserts 4M rows
-├── ingest_csv.py               # Development: Ingests CSV to staging
-├── normalize_data.sql          # Development: Moves staging to schema
-└── explore_staging.ipynb       # Verifies counts and explores data
+See `train.txt` for command options, model naming, and output locations.
+
+## Saved Outputs
+
+Normal all-season outputs:
+
+- `models_discharge/`
+- `models_air_temperature/`
+- `lightning_logs_discharge/`
+- `lightning_logs_air_temperature/`
+- `discharge_*metrics*.csv`
+- `air_temperature_*metrics*.csv`
+- `discharge_validation_predictions_long.csv`
+- `air_temperature_validation_predictions_long.csv`
+
+Season-specific outputs:
+
+- `season_specific_training/models_discharge_season_specific/`
+- `season_specific_training/models_air_temperature_season_specific/`
+- `season_specific_training/lightning_logs_discharge_season_specific/`
+- `season_specific_training/lightning_logs_air_temperature_season_specific/`
+- `season_specific_training/metrics/`
+- `season_specific_training/predictions/`
+
+## Current Result Summary
+
+Normal all-season discharge models:
+
+| Site | RMSE | MAE | RMSE skill vs persistence | MAE skill vs persistence |
+| --- | ---: | ---: | ---: | ---: |
+| 3 | 22.37 | 13.25 | 0.031 | 0.007 |
+| 4 | 20.49 | 12.66 | 0.089 | 0.115 |
+
+Normal all-season air-temperature model:
+
+| Site | RMSE | MAE | RMSE skill vs persistence | MAE skill vs persistence |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 2.95 | 2.16 | 0.634 | 0.651 |
+
+Season-specific training is most useful for discharge, especially winter, fall,
+and summer. Spring discharge is mixed and can hurt the pooled result. For site 1
+air temperature, the normal all-season model is better overall than
+season-specific models. Site 2 air temperature currently has season-specific
+results but no matching normal all-season baseline in the committed metrics.
+
+See `metrics.txt` for the detailed metric file map and interpretation notes.
+
+## Project Structure
+
+```text
+CS6994FinalProject/
++-- README.md
++-- parquet.txt
++-- train.txt
++-- metrics.txt
++-- Dockerfile
++-- docker-compose.yml
++-- init-scripts/
++-- normalize_data.sql
++-- ingest_csv.py
++-- build_streamflow_training_parquet_v2_multihorizon.ipynb
++-- streamflow_parquet_v2/
++-- air_temperature_parquet_v2/
++-- temporal_transformer/
++-- models_discharge/
++-- models_air_temperature/
++-- lightning_logs_discharge/
++-- lightning_logs_air_temperature/
++-- season_specific_training/
 ```

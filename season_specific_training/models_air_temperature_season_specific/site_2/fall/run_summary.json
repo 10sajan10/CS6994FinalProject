@@ -1,0 +1,15 @@
+{
+  "target_variable": "air_temperature",
+  "site_id": 2,
+  "season": "fall",
+  "train_rows": 2912,
+  "validation_rows": 364,
+  "validation_start": "2025-03-24 19:00:00",
+  "validation_end": "2026-03-24 18:00:00",
+  "rmse": 9.99162094025148,
+  "mae": 6.587073802947998,
+  "rmse_skill_vs_persistence": 0.3975372403644224,
+  "mae_skill_vs_persistence": 0.43271855954377314,
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/season_specific_training/models_air_temperature_season_specific/site_2/fall/air_temperature-site_2-fall-best.ckpt",
+  "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/season_specific_training/models_air_temperature_season_specific/site_2/fall/air_temperature_site_2_fall_best_model.pt"
+}

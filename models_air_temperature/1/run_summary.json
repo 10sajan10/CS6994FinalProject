@@ -1,0 +1,20 @@
+{
+  "site_id": 1,
+  "target_variable": "air_temperature",
+  "train_rows": 31830,
+  "validation_rows": 3877,
+  "validation_start": "2025-03-24 18:00:00",
+  "validation_end": "2026-03-24 17:00:00",
+  "rmse": 2.952830466462962,
+  "mae": 2.1611316204071045,
+  "variation_clip_enabled": true,
+  "variation_clip_pct": 0.05,
+  "variation_clip_history_multiplier": 1.5,
+  "variation_clip_absolute_floor": 2.0,
+  "persistence_rmse": 8.05691500479751,
+  "persistence_mae": 6.196762561798096,
+  "rmse_skill_vs_persistence": 0.6335035848454784,
+  "mae_skill_vs_persistence": 0.6512482770067576,
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models_air_temperature/1/air-temperature-lightning-best.ckpt",
+  "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models_air_temperature/1/air_temperature_best_model.pt"
+}

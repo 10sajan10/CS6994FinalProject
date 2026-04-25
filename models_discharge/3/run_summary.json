@@ -1,0 +1,19 @@
+{
+  "site_id": 3,
+  "train_rows": 29388,
+  "validation_rows": 3697,
+  "validation_start": "2025-03-24 07:00:00",
+  "validation_end": "2026-03-24 06:00:00",
+  "rmse": 22.367606363961364,
+  "mae": 13.247605323791504,
+  "variation_clip_enabled": true,
+  "variation_clip_pct": 0.05,
+  "variation_clip_history_multiplier": 1.5,
+  "variation_clip_absolute_floor": 2.0,
+  "persistence_rmse": 23.08158667758106,
+  "persistence_mae": 13.337903022766113,
+  "rmse_skill_vs_persistence": 0.030932895714365194,
+  "mae_skill_vs_persistence": 0.006770007160831981,
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models_discharge/3/discharge-lightning-best-v2.ckpt",
+  "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models_discharge/3/discharge_best_model.pt"
+}

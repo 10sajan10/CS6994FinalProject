@@ -1,0 +1,15 @@
+{
+  "target_variable": "discharge",
+  "site_id": 4,
+  "season": "fall",
+  "train_rows": 2589,
+  "validation_rows": 322,
+  "validation_start": "2025-03-24 18:00:00",
+  "validation_end": "2026-03-24 17:00:00",
+  "rmse": 9.789592074038337,
+  "mae": 5.65540075302124,
+  "rmse_skill_vs_persistence": 0.05269410363660798,
+  "mae_skill_vs_persistence": 0.012485318711966675,
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/season_specific_training/models_discharge_season_specific/site_4/fall/discharge-site_4-fall-best.ckpt",
+  "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/season_specific_training/models_discharge_season_specific/site_4/fall/discharge_site_4_fall_best_model.pt"
+}

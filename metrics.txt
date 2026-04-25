@@ -1,0 +1,181 @@
+Metrics and results guide
+=========================
+
+Metric meaning
+--------------
+
+RMSE:
+
+- Root mean squared error in the target variable's native unit.
+- Lower is better.
+
+MAE:
+
+- Mean absolute error in the target variable's native unit.
+- Lower is better.
+
+Persistence baseline:
+
+- Uses the latest observed value in the lookback window as the forecast for all
+  24 future horizons.
+- discharge baseline value: discharge_t-1.
+- air-temperature baseline value: air_temp_t-1.
+
+Skill vs persistence:
+
+- skill = 1 - model_error / persistence_error
+- Positive skill means the model beats persistence.
+- Zero means tied with persistence.
+- Negative skill means worse than persistence.
+
+
+Normal all-season metric files
+------------------------------
+
+Discharge:
+
+- discharge_overall_validation_metrics.csv
+- discharge_metrics_by_season.csv
+- discharge_metrics_by_season_horizon.csv
+- discharge_validation_predictions_long.csv
+
+Air temperature:
+
+- air_temperature_overall_validation_metrics.csv
+- air_temperature_metrics_by_season.csv
+- air_temperature_metrics_by_season_horizon.csv
+- air_temperature_validation_predictions_long.csv
+
+Normal horizon metric columns:
+
+- site_id
+- season
+- horizon_bin
+- n
+- rmse
+- mae
+- persistence_rmse
+- persistence_mae
+- rmse_skill_vs_persistence
+- mae_skill_vs_persistence
+
+Normal prediction CSV columns:
+
+- site_id
+- forecast_start_time
+- horizon
+- horizon_bin
+- target_timestamp
+- season
+- y_true
+- y_pred
+- y_pred_unclipped
+- y_persistence
+
+
+Season-specific metric files
+----------------------------
+
+Per-variable files:
+
+- season_specific_training/metrics/discharge_season_specific_overall_metrics.csv
+- season_specific_training/metrics/discharge_season_specific_metrics_by_season.csv
+- season_specific_training/metrics/discharge_season_specific_metrics_by_season_horizon.csv
+- season_specific_training/metrics/air_temperature_season_specific_overall_metrics.csv
+- season_specific_training/metrics/air_temperature_season_specific_metrics_by_season.csv
+- season_specific_training/metrics/air_temperature_season_specific_metrics_by_season_horizon.csv
+
+Combined files:
+
+- season_specific_training/metrics/season_specific_overall_metrics.csv
+- season_specific_training/metrics/season_specific_metrics_by_variable_season.csv
+- season_specific_training/metrics/season_specific_metrics_by_variable_horizon.csv
+
+Prediction files:
+
+- season_specific_training/predictions/discharge_season_specific_validation_predictions_long.csv
+- season_specific_training/predictions/air_temperature_season_specific_validation_predictions_long.csv
+- season_specific_training/predictions/season_specific_validation_predictions_long.csv
+
+Season-specific horizon metric columns:
+
+- target_variable
+- site_id
+- season
+- horizon_bin
+- n
+- rmse
+- mae
+- rmse_skill_vs_persistence
+- mae_skill_vs_persistence
+
+The season-specific metric CSVs intentionally do not report persistence_rmse or
+persistence_mae, but the skill columns are still calculated against persistence.
+
+
+Current normal all-season overall results
+-----------------------------------------
+
+Discharge:
+
+- Site 3: RMSE 22.37, MAE 13.25, RMSE skill 0.031, MAE skill 0.007.
+- Site 4: RMSE 20.49, MAE 12.66, RMSE skill 0.089, MAE skill 0.115.
+
+Air temperature:
+
+- Site 1: RMSE 2.95, MAE 2.16, RMSE skill 0.634, MAE skill 0.651.
+
+
+Current season-specific overall results
+---------------------------------------
+
+Discharge:
+
+- Site 3 winter: RMSE 6.84, MAE 4.27, RMSE skill 0.246.
+- Site 3 spring: RMSE 26.73, MAE 16.97, RMSE skill 0.028.
+- Site 3 summer: RMSE 16.46, MAE 8.27, RMSE skill 0.068.
+- Site 3 fall: RMSE 4.73, MAE 2.81, RMSE skill 0.187.
+- Site 4 winter: RMSE 14.79, MAE 8.92, RMSE skill 0.044.
+- Site 4 spring: RMSE 26.78, MAE 18.50, RMSE skill 0.000.
+- Site 4 summer: RMSE 11.52, MAE 7.55, RMSE skill 0.186.
+- Site 4 fall: RMSE 9.79, MAE 5.66, RMSE skill 0.053.
+
+Air temperature:
+
+- Site 1 winter: RMSE 3.27, MAE 2.47, RMSE skill 0.417.
+- Site 1 spring: RMSE 3.45, MAE 2.57, RMSE skill 0.535.
+- Site 1 summer: RMSE 2.58, MAE 1.89, RMSE skill 0.746.
+- Site 1 fall: RMSE 2.79, MAE 2.06, RMSE skill 0.627.
+- Site 2 winter: RMSE 10.54, MAE 6.06, RMSE skill 0.265.
+- Site 2 spring: RMSE 11.96, MAE 7.78, RMSE skill 0.348.
+- Site 2 summer: RMSE 8.82, MAE 6.10, RMSE skill 0.350.
+- Site 2 fall: RMSE 9.99, MAE 6.59, RMSE skill 0.398.
+
+
+Normal vs season-specific interpretation
+----------------------------------------
+
+Discharge:
+
+- Season-specific training improves many individual site/season/horizon groups.
+- It is strongest for winter, fall, and summer discharge.
+- Spring discharge is weaker, especially for site 4, and can pull the pooled
+  average down.
+- Best use: keep season-specific discharge models as candidates for inference,
+  especially outside spring, but compare against the normal all-season model
+  before deployment.
+
+Air temperature:
+
+- For site 1, the normal all-season air-temperature model is better overall than
+  the season-specific models.
+- Site 2 has season-specific metrics, but the committed normal air-temperature
+  metrics currently only include site 1, so site 2 does not yet have a direct
+  normal-vs-season-specific comparison.
+
+Comparison note:
+
+- Normal metric files group season by target timestamp.
+- Season-specific metric files group season by the trained forecast-start season.
+- For a strict normal-vs-season-specific comparison, derive season from
+  target_timestamp in the season-specific prediction CSV.
