@@ -34,7 +34,7 @@ TEMPORAL_SEQUENCE_FEATURE_NAMES = [
     "dow_cos",
     "month_sin",
     "month_cos",
-    "day_of_year",
+    "day_of_year_frac",
     "season_winter",
     "season_spring",
     "season_summer",
@@ -69,6 +69,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--variation-clip-pct", type=float, default=0.05)
+    parser.add_argument("--variation-clip-history-multiplier", type=float, default=1.5)
+    parser.add_argument("--variation-clip-absolute-floor", type=float, default=2.0)
+    parser.add_argument("--disable-variation-clip", action="store_true")
     return parser.parse_args()
 
 
@@ -259,7 +263,7 @@ def build_temporal_sequence_features(df: pd.DataFrame, lag_cols: list[str]) -> n
         temporal[:, step_idx, 3] = np.cos(2.0 * np.pi * day_of_week / 7.0)
         temporal[:, step_idx, 4] = np.sin(2.0 * np.pi * (months - 1.0) / 12.0)
         temporal[:, step_idx, 5] = np.cos(2.0 * np.pi * (months - 1.0) / 12.0)
-        temporal[:, step_idx, 6] = day_of_year
+        temporal[:, step_idx, 6] = day_of_year / 366.0
         temporal[:, step_idx, 7] = (season_names == "winter").to_numpy(dtype=np.float32)
         temporal[:, step_idx, 8] = (season_names == "spring").to_numpy(dtype=np.float32)
         temporal[:, step_idx, 9] = (season_names == "summer").to_numpy(dtype=np.float32)
@@ -284,6 +288,68 @@ def trailing_one_year_split(site_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
     return train_df, valid_df, validation_start, latest_target_timestamp
 
 
+def latest_discharge_column(lag_cols: list[str]) -> str:
+    if "discharge_t-1" not in lag_cols:
+        raise ValueError("Expected lag feature discharge_t-1 to build residual targets.")
+    return "discharge_t-1"
+
+
+def latest_discharge_values(df: pd.DataFrame, lag_cols: list[str]) -> np.ndarray:
+    latest_col = latest_discharge_column(lag_cols)
+    values = df[latest_col].to_numpy(dtype=np.float32)
+    return values.reshape(-1, 1)
+
+
+def make_delta_targets(df: pd.DataFrame, lag_cols: list[str], target_cols: list[str]) -> np.ndarray:
+    target_values = df[target_cols].to_numpy(dtype=np.float32)
+    return target_values - latest_discharge_values(df, lag_cols)
+
+
+def reconstruct_absolute_targets(delta_values: np.ndarray, df: pd.DataFrame, lag_cols: list[str]) -> np.ndarray:
+    return delta_values + latest_discharge_values(df, lag_cols)
+
+
+def make_persistence_predictions(df: pd.DataFrame, lag_cols: list[str], target_cols: list[str]) -> np.ndarray:
+    latest_values = latest_discharge_values(df, lag_cols)
+    return np.repeat(latest_values, repeats=len(target_cols), axis=1)
+
+
+def historical_max_hourly_change(df: pd.DataFrame, lag_cols: list[str]) -> np.ndarray:
+    lag_values = df[lag_cols].to_numpy(dtype=np.float32)
+    hourly_changes = np.abs(np.diff(lag_values, axis=1))
+    return np.nan_to_num(hourly_changes.max(axis=1), nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def clip_prediction_variation(
+    predictions: np.ndarray,
+    df: pd.DataFrame,
+    lag_cols: list[str],
+    pct_limit: float,
+    history_multiplier: float,
+    absolute_floor: float,
+) -> np.ndarray:
+    clipped = predictions.copy()
+    latest_values = latest_discharge_values(df, lag_cols).reshape(-1)
+    history_limit = history_multiplier * historical_max_hourly_change(df, lag_cols)
+
+    previous = latest_values
+    for step_idx in range(clipped.shape[1]):
+        pct_limit_values = pct_limit * np.abs(previous)
+        allowed = np.maximum.reduce(
+            [
+                np.full_like(previous, absolute_floor, dtype=np.float32),
+                pct_limit_values.astype(np.float32),
+                history_limit.astype(np.float32),
+            ]
+        )
+        lower = previous - allowed
+        upper = previous + allowed
+        clipped[:, step_idx] = np.clip(clipped[:, step_idx], lower, upper)
+        previous = clipped[:, step_idx]
+
+    return clipped
+
+
 def fit_scalers(
     train_df: pd.DataFrame,
     lag_cols: list[str],
@@ -302,8 +368,9 @@ def fit_scalers(
     static_scaler = StandardScaler()
     static_scaler.fit(static_train.to_numpy(dtype=np.float32))
 
+    target_deltas = make_delta_targets(train_df, lag_cols, target_cols)
     target_scaler = StandardScaler()
-    target_scaler.fit(train_df[target_cols].to_numpy(dtype=np.float32).reshape(-1, 1))
+    target_scaler.fit(target_deltas.reshape(-1, 1))
 
     return lag_scaler, static_scaler, target_scaler, static_feature_cols
 
@@ -334,7 +401,7 @@ def transform_frame(
     static_values = static_scaler.transform(static_df.to_numpy(dtype=np.float32))
     static_values = np.nan_to_num(static_values, nan=0.0, posinf=0.0, neginf=0.0)
 
-    target_values = df[target_cols].to_numpy(dtype=np.float32)
+    target_values = make_delta_targets(df, lag_cols, target_cols)
     target_values = target_scaler.transform(target_values.reshape(-1, 1)).reshape(target_values.shape)
     target_values = np.nan_to_num(target_values, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -477,12 +544,32 @@ def compute_overall_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[flo
     return float(rmse), float(mae)
 
 
+def relative_skill_score(model_error: float, baseline_error: float) -> float | None:
+    if baseline_error <= 0.0:
+        return None
+    return float(1.0 - (model_error / baseline_error))
+
+
+def horizon_bin_label(horizon_step: int) -> str:
+    if 1 <= horizon_step <= 6:
+        return "0-6"
+    if 7 <= horizon_step <= 12:
+        return "6-12"
+    if 13 <= horizon_step <= 18:
+        return "12-18"
+    if 19 <= horizon_step <= 24:
+        return "18-24"
+    raise ValueError(f"Unsupported horizon step: {horizon_step}")
+
+
 def expand_predictions_by_target_timestamp(
     site_id: int,
     valid_df: pd.DataFrame,
     target_cols: list[str],
     y_true: np.ndarray,
     y_pred: np.ndarray,
+    y_pred_unclipped: np.ndarray,
+    y_persistence: np.ndarray,
 ) -> pd.DataFrame:
     records: list[dict] = []
     horizon_steps = [extract_horizon_number(col) for col in target_cols]
@@ -494,10 +581,15 @@ def expand_predictions_by_target_timestamp(
             records.append(
                 {
                     "site_id": int(site_id),
+                    "forecast_start_time": forecast_start,
+                    "horizon": int(horizon_step),
+                    "horizon_bin": horizon_bin_label(horizon_step),
                     "target_timestamp": target_timestamp,
                     "season": month_to_season_name(int(target_timestamp.month)),
                     "y_true": float(y_true[row_idx, step_idx]),
                     "y_pred": float(y_pred[row_idx, step_idx]),
+                    "y_pred_unclipped": float(y_pred_unclipped[row_idx, step_idx]),
+                    "y_persistence": float(y_persistence[row_idx, step_idx]),
                 }
             )
     return pd.DataFrame.from_records(records)
@@ -508,15 +600,54 @@ def aggregate_season_metrics(expanded_df: pd.DataFrame) -> pd.DataFrame:
     for (site_id, season), group in expanded_df.groupby(["site_id", "season"], sort=True):
         rmse = math.sqrt(mean_squared_error(group["y_true"], group["y_pred"]))
         mae = mean_absolute_error(group["y_true"], group["y_pred"])
+        persistence_rmse = math.sqrt(mean_squared_error(group["y_true"], group["y_persistence"]))
+        persistence_mae = mean_absolute_error(group["y_true"], group["y_persistence"])
         rows.append(
             {
                 "site_id": int(site_id),
                 "season": season,
                 "rmse": float(rmse),
                 "mae": float(mae),
+                "persistence_rmse": float(persistence_rmse),
+                "persistence_mae": float(persistence_mae),
+                "rmse_skill_vs_persistence": relative_skill_score(float(rmse), float(persistence_rmse)),
+                "mae_skill_vs_persistence": relative_skill_score(float(mae), float(persistence_mae)),
             }
         )
     return pd.DataFrame(rows).sort_values(["site_id", "season"]).reset_index(drop=True)
+
+
+def aggregate_horizon_season_metrics(expanded_df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    group_cols = ["site_id", "season", "horizon_bin"]
+    for (site_id, season, horizon_bin), group in expanded_df.groupby(group_cols, sort=True):
+        rmse = math.sqrt(mean_squared_error(group["y_true"], group["y_pred"]))
+        mae = mean_absolute_error(group["y_true"], group["y_pred"])
+        persistence_rmse = math.sqrt(mean_squared_error(group["y_true"], group["y_persistence"]))
+        persistence_mae = mean_absolute_error(group["y_true"], group["y_persistence"])
+        rows.append(
+            {
+                "site_id": int(site_id),
+                "season": season,
+                "horizon_bin": horizon_bin,
+                "n": int(len(group)),
+                "rmse": float(rmse),
+                "mae": float(mae),
+                "persistence_rmse": float(persistence_rmse),
+                "persistence_mae": float(persistence_mae),
+                "rmse_skill_vs_persistence": relative_skill_score(float(rmse), float(persistence_rmse)),
+                "mae_skill_vs_persistence": relative_skill_score(float(mae), float(persistence_mae)),
+            }
+        )
+
+    horizon_order = {"0-6": 0, "6-12": 1, "12-18": 2, "18-24": 3}
+    out = pd.DataFrame(rows)
+    out["horizon_order"] = out["horizon_bin"].map(horizon_order)
+    return (
+        out.sort_values(["site_id", "season", "horizon_order"])
+        .drop(columns=["horizon_order"])
+        .reset_index(drop=True)
+    )
 
 
 def train_one_site(
@@ -626,28 +757,56 @@ def train_one_site(
     best_model = best_model.to(device)
 
     scaled_predictions = predict_batches(best_model, valid_loader, device=device)
-    scaled_truth = valid_targets
 
-    y_pred = inverse_scale_targets(scaled_predictions, target_scaler)
-    y_true = inverse_scale_targets(scaled_truth, target_scaler)
+    predicted_deltas = inverse_scale_targets(scaled_predictions, target_scaler)
+    y_pred_unclipped = reconstruct_absolute_targets(predicted_deltas, valid_df, lag_cols)
+    if args.disable_variation_clip:
+        y_pred = y_pred_unclipped
+    else:
+        y_pred = clip_prediction_variation(
+            predictions=y_pred_unclipped,
+            df=valid_df,
+            lag_cols=lag_cols,
+            pct_limit=args.variation_clip_pct,
+            history_multiplier=args.variation_clip_history_multiplier,
+            absolute_floor=args.variation_clip_absolute_floor,
+        )
+    y_true = valid_df[target_cols].to_numpy(dtype=np.float32)
+    y_persistence = make_persistence_predictions(valid_df, lag_cols, target_cols)
 
     rmse, mae = compute_overall_metrics(y_true, y_pred)
+    persistence_rmse, persistence_mae = compute_overall_metrics(y_true, y_persistence)
+    rmse_skill = relative_skill_score(rmse, persistence_rmse)
+    mae_skill = relative_skill_score(mae, persistence_mae)
     print(f"Site {site_id}: validation RMSE={rmse:.4f}, MAE={mae:.4f}")
+    mae_skill_text = f"{mae_skill:.4f}" if mae_skill is not None else "n/a"
+    print(
+        f"Site {site_id}: persistence RMSE={persistence_rmse:.4f}, MAE={persistence_mae:.4f}, "
+        f"model MAE skill={mae_skill_text}"
+    )
 
     best_model_path = site_model_dir / "best_model.pt"
     metadata_path = site_model_dir / "metadata.json"
+    residual_base_col = latest_discharge_column(lag_cols)
     torch.save(
         {
             "model_state_dict": best_model.state_dict(),
             "site_id": site_id,
             "lag_cols": lag_cols,
             "target_cols": target_cols,
+            "target_transform": "delta_from_latest_discharge",
+            "residual_base_col": residual_base_col,
+            "variation_clip_enabled": not args.disable_variation_clip,
+            "variation_clip_pct": args.variation_clip_pct,
+            "variation_clip_history_multiplier": args.variation_clip_history_multiplier,
+            "variation_clip_absolute_floor": args.variation_clip_absolute_floor,
             "static_feature_cols": static_feature_cols,
             "lag_scaler_mean": lag_scaler.mean_.tolist(),
             "lag_scaler_scale": lag_scaler.scale_.tolist(),
             "temporal_sequence_feature_names": TEMPORAL_SEQUENCE_FEATURE_NAMES,
             "static_scaler_mean": static_scaler.mean_.tolist(),
             "static_scaler_scale": static_scaler.scale_.tolist(),
+            "target_scaler_applies_to": "target_discharge_t+h_minus_discharge_t-1",
             "target_scaler_mean": target_scaler.mean_.tolist(),
             "target_scaler_scale": target_scaler.scale_.tolist(),
             "model_hparams": best_model.hparams,
@@ -667,6 +826,12 @@ def train_one_site(
         "validation_rows": int(len(valid_df)),
         "lag_cols": lag_cols,
         "target_cols": target_cols,
+        "target_transform": "delta_from_latest_discharge",
+        "residual_base_col": residual_base_col,
+        "variation_clip_enabled": not args.disable_variation_clip,
+        "variation_clip_pct": args.variation_clip_pct,
+        "variation_clip_history_multiplier": args.variation_clip_history_multiplier,
+        "variation_clip_absolute_floor": args.variation_clip_absolute_floor,
         "static_feature_cols": static_feature_cols,
         "temporal_sequence_feature_names": TEMPORAL_SEQUENCE_FEATURE_NAMES,
         "model_hparams": dict(best_model.hparams),
@@ -681,6 +846,8 @@ def train_one_site(
         target_cols=target_cols,
         y_true=y_true,
         y_pred=y_pred,
+        y_pred_unclipped=y_pred_unclipped,
+        y_persistence=y_persistence,
     )
 
     run_summary = {
@@ -691,6 +858,14 @@ def train_one_site(
         "validation_end": str(validation_end),
         "rmse": rmse,
         "mae": mae,
+        "variation_clip_enabled": not args.disable_variation_clip,
+        "variation_clip_pct": args.variation_clip_pct,
+        "variation_clip_history_multiplier": args.variation_clip_history_multiplier,
+        "variation_clip_absolute_floor": args.variation_clip_absolute_floor,
+        "persistence_rmse": persistence_rmse,
+        "persistence_mae": persistence_mae,
+        "rmse_skill_vs_persistence": rmse_skill,
+        "mae_skill_vs_persistence": mae_skill,
         "best_checkpoint": best_ckpt_path,
         "best_model_path": str(best_model_path),
     }
@@ -731,6 +906,11 @@ def main() -> None:
     metrics_path = output_root / "metrics_by_season.csv"
     metrics_by_season.to_csv(metrics_path, index=False)
     print(f"Saved seasonal metrics to {metrics_path}")
+
+    horizon_metrics = aggregate_horizon_season_metrics(combined_predictions)
+    horizon_metrics_path = output_root / "metrics_by_season_horizon.csv"
+    horizon_metrics.to_csv(horizon_metrics_path, index=False)
+    print(f"Saved horizon seasonal metrics to {horizon_metrics_path}")
 
     overall_metrics_path = output_root / "overall_validation_metrics.csv"
     pd.DataFrame(overall_rows).to_csv(overall_metrics_path, index=False)

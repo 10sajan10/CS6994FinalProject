@@ -1,7 +1,7 @@
 {
   "site_id": 3,
   "best_model_path": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models/3/best_model.pt",
-  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models/3/lightning-best-v1.ckpt",
+  "best_checkpoint": "/uufs/chpc.utah.edu/common/home/u1591982/CS6994FinalProject/models/3/lightning-best-v2.ckpt",
   "validation_start": "2025-03-24 07:00:00",
   "validation_end": "2026-03-24 06:00:00",
   "train_rows": 29388,
@@ -202,6 +202,12 @@
     "target_discharge_t+23",
     "target_discharge_t+24"
   ],
+  "target_transform": "delta_from_latest_discharge",
+  "residual_base_col": "discharge_t-1",
+  "variation_clip_enabled": true,
+  "variation_clip_pct": 0.05,
+  "variation_clip_history_multiplier": 1.5,
+  "variation_clip_absolute_floor": 2.0,
   "static_feature_cols": [
     "snow_depth_latest",
     "air_temp_avg_last_24h",
@@ -215,7 +221,7 @@
     "dow_cos",
     "month_sin",
     "month_cos",
-    "day_of_year",
+    "day_of_year_frac",
     "season_winter",
     "season_spring",
     "season_summer",
