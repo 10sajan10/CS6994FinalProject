@@ -1,10 +1,9 @@
-.git
-*.pyc
-__pycache__
-*.parquet
-data/
-Data/
-*.tar
-*.ipynb
-*.md
-*.csv
+# This Docker build creates the Postgres database image.
+# The Dockerfile only needs init-scripts/, so keep the build context tiny.
+*
+
+!Dockerfile
+!docker-compose.yml
+!.dockerignore
+!init-scripts/
+!init-scripts/**
