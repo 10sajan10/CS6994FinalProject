@@ -4,3 +4,5 @@ pyarrow
 scikit-learn
 torch
 pytorch-lightning
+psycopg2-binary
+matplotlib
