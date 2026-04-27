@@ -1,0 +1,18 @@
+{
+  "site_id": 3,
+  "train_rows": 29388,
+  "validation_rows": 3697,
+  "validation_start": "2025-03-24 07:00:00",
+  "validation_end": "2026-03-24 06:00:00",
+  "rmse": 24.87322470305984,
+  "mae": 15.365386009216309,
+  "variation_clip_enabled": true,
+  "variation_clip_pct": 0.05,
+  "variation_clip_history_multiplier": 1.5,
+  "variation_clip_absolute_floor": 2.0,
+  "persistence_rmse": 23.08158667758106,
+  "persistence_mae": 13.337903022766113,
+  "rmse_skill_vs_persistence": -0.07762196119814324,
+  "mae_skill_vs_persistence": -0.1520091263963712,
+  "model_type": "xgboost_multioutput"
+}
